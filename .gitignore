@@ -1,0 +1,43 @@
+
+# AutoAttn generated files
+/build/
+/build-release/
+/autoattn
+
+# Generated output files in project root
+/*.csv
+/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Backups
+*.bak
+*.before_path_safety
+
+# macOS
+.DS_Store
+
+# Manually compiled test executables
+/tests/test_matrix
+/tests/test_attention
+/tests/test_tiled_attention
+/tests/test_memory_estimator
+/tests/test_dispatch_policy
+/tests/test_attention_engine
+/tests/test_calibration_io
+/tests/test_csv_io
+/tests/test_matrix_boundaries
+/tests/attention_reference_driver
+
+# Manually compiled benchmark executables
+/benchmarks/benchmark_attention
+/benchmarks/benchmark_block_sizes
+/benchmarks/benchmark_memory
+/benchmarks/calibrate_dispatch
+/benchmarks/calibrate_grid
+/benchmarks/analyze_grid
+/benchmarks/evaluate_heldout
+/benchmarks/check_timing_noise
