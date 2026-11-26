@@ -116,13 +116,13 @@ AutoAttn separates attention computation, memory estimation, kernel selection, a
 Given query, key, and value matrices,
 
 $$
-Q \in \mathbb{R}^{N \times d},\quad K \in \mathbb{R}^{M \times d},\quad V \in \mathbb{R}^{M \times d_v},
+Q \in \mathbb{R}^{N \times d},\quad K \in \mathbb{R}^{M \times d},\quad V \in \mathbb{R}^{M \times d_v}
 $$
 
 attention is evaluated as
 
 $$
-\operatorname{Attention}(Q,K,V) = \operatorname{softmax} \left(\frac{QK^\top}{\sqrt{d}}\right)V.
+\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\left(\frac{QK^\top}{\sqrt{d}}\right)V
 $$
 
 The baseline implementation explicitly stores the N-by-M attention-score matrix and uses numerically stable softmax normalization.
