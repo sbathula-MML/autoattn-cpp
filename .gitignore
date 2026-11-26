@@ -41,3 +41,5 @@ __pycache__/
 /benchmarks/analyze_grid
 /benchmarks/evaluate_heldout
 /benchmarks/check_timing_noise
+
+/build-sanitize/

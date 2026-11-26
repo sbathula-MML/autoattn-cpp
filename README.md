@@ -1,53 +1,211 @@
 # AutoAttn
 
-### Adaptive and Memory-Efficient Transformer Attention in C++
+### Adaptive and Memory-Efficient Transformer Attention Engine in C++
 
-AutoAttn is a CPU-based Transformer attention engine implemented in C++17. It provides standard scaled dot-product attention, memory-efficient tiled attention using online softmax, and an adaptive dispatcher that selects an implementation based on measured performance and a scratch-memory budget.
+AutoAttn is a lightweight, CPU-based Transformer attention engine written in C++17. It implements conventional scaled dot-product attention, memory-efficient tiled attention using online softmax, and an adaptive execution policy that selects a kernel configuration based on workload characteristics, measured performance, and memory constraints.
 
-The project investigates the trade-offs between execution time, temporary memory usage, numerical accuracy, and attention block size.
+The project explores a central problem in efficient Transformer computation: **how can attention be evaluated without materializing the full attention matrix, while preserving numerical accuracy and minimizing execution time?**
 
-## Features
+AutoAttn provides an end-to-end implementation, from contiguous matrix storage and attention kernels to memory-aware dispatch, calibration, benchmarking, and numerical validation.
 
-- Standard scaled dot-product attention
-- Memory-efficient attention using key-block tiling and online softmax
-- Causal and noncausal attention
-- Adaptive algorithm and block-size selection
-- Benchmark-driven calibration profiles
-- Configurable scratch-memory budgets
-- CSV input and output
-- Deterministic input generation
-- Automated C++ and Python correctness tests
-- Reproducible CPU benchmarks
+## Highlights
+
+- **Standard attention:** Numerically stable scaled dot-product attention with a materialized score matrix.
+- **Tiled attention:** Streaming, blockwise attention using online softmax without an explicit full attention matrix.
+- **Adaptive execution:** Runtime selection of algorithms and tile sizes using benchmark calibration and memory constraints.
+- **Memory-aware dispatch:** Explicit scratch-memory estimation and budget enforcement.
+- **Causal attention:** Support for causal and noncausal attention.
+- **Custom C++ matrix abstraction:** Templated, contiguous, row-major storage.
+- **Command-line interface:** Deterministic synthetic inputs or user-provided CSV matrices.
+- **Reproducibility:** Automated tests, benchmark scripts, calibration data, and experimental results.
+
+## Performance Highlights
+
+AutoAttn was evaluated using optimized C++17 implementations on an Apple Silicon MacBook Pro.
+
+| Metric | Observed result |
+|---|---|
+| Maximum tiled-attention speedup | **4.74x** |
+| Workloads where tiled attention was faster | **12 / 12** |
+| Peak memory reduction at N=4096 | **92.05%** |
+| Runtime benchmark measurements | 120 |
+| Memory benchmark measurements | 30 |
+| Automated tests | 12 passing |
+
+The runtime comparison uses five measured repetitions per configuration, across three sequence lengths, two feature dimensions, and both causal and noncausal attention.
+
+These results compare the project's own standard and tiled CPU implementations, not production attention libraries.
+
+### Runtime Performance
+
+![Tiled attention speedup](figures/final_speedup.png)
+
+The tiled implementation achieves speedups ranging from approximately **1.73x to 4.74x** across the tested workloads.
+
+The largest observed speedup occurs for causal attention with sequence length 1024 and feature dimension 64.
+
+![Runtime comparison](figures/final_runtime.png)
+
+### Memory Efficiency
+
+![Memory efficiency](figures/final_memory.png)
+
+Median peak resident memory over five executions:
+
+| Sequence length | Standard attention | Tiled attention | Reduction |
+|---|---:|---:|---:|
+| 1024 | 6.547 MiB | 2.531 MiB | 61.34% |
+| 2048 | 19.547 MiB | 3.531 MiB | 81.93% |
+| 4096 | 69.547 MiB | 5.531 MiB | 92.05% |
+
+At N=4096, avoiding the full float32 attention-score matrix eliminates approximately 64 MiB of temporary matrix storage.
+
+Peak process RSS includes input matrices, output storage, temporary allocations, and runtime overhead. It is distinct from the dispatcher's estimated scratch-memory requirement.
+
+## Architecture
+
+AutoAttn separates attention computation, memory estimation, kernel selection, and data handling into independent C++ components.
+
+```text
+               Input Q, K, V
+                     |
+                     v
+              Attention Engine
+                     |
+                     v
+              Adaptive Dispatcher
+                 /         \
+                /           \
+       Calibration       Memory Budget
+          Profile          Estimator
+                \           /
+                 \         /
+                     |
+               Kernel Selection
+                  /       \
+                 /         \
+        Standard           Tiled
+        Attention          Attention
+                 \         /
+                  \       /
+                     |
+                Output Matrix
+                     |
+                CSV + Metrics
+```
+
+### Core Components
+
+| Component | Responsibility |
+|---|---|
+| `matrix.hpp` | Templated contiguous matrix representation |
+| `standard_attention.hpp` | Conventional scaled dot-product attention |
+| `tiled_attention.hpp` | Blockwise streaming attention with online softmax |
+| `memory_estimator.hpp` | Scratch-memory estimation |
+| `dispatch_policy.hpp` | Algorithm and block-size selection |
+| `calibration_io.hpp` | Loading benchmark calibration profiles |
+| `attention_engine.hpp` | Integration of dispatch and attention execution |
+| `csv_io.hpp` | Matrix serialization and input validation |
+| `path_safety.hpp` | Protection against accidental input-file overwrites |
+| `src/main.cpp` | Command-line application |
+
+## Algorithms
+
+### 1. Standard Scaled Dot-Product Attention
+
+Given query, key, and value matrices,
+
+\[
+Q \in \mathbb{R}^{N \times d},\quad
+K \in \mathbb{R}^{M \times d},\quad
+V \in \mathbb{R}^{M \times d_v},
+\]
+
+attention is evaluated as
+
+\[
+\operatorname{Attention}(Q,K,V)
+=
+\operatorname{softmax}
+\left(\frac{QK^\top}{\sqrt{d}}\right)V.
+\]
+
+The baseline implementation explicitly stores the N-by-M attention-score matrix and uses numerically stable softmax normalization.
+
+### 2. Tiled Attention with Online Softmax
+
+The tiled implementation divides the key sequence into blocks and incrementally updates the softmax normalization.
+
+For each query row, it maintains:
+
+- A running maximum for numerical stability.
+- A running softmax normalization factor.
+- An accumulated weighted value vector.
+
+When the running maximum changes, previous contributions are rescaled before incorporating the next block.
+
+This avoids materializing the full attention-score matrix.
+
+Unlike GPU FlashAttention implementations, the current CPU kernel processes one query row at a time and tiles across the key dimension.
+
+### 3. Adaptive Dispatch
+
+AutoAttn selects an attention implementation subject to a user-specified scratch-memory budget.
+
+For workloads with exact matching calibration measurements, the dispatcher selects the fastest measured feasible configuration.
+
+For unseen workloads, it applies a deterministic memory-aware fallback policy.
+
+The current dispatcher uses exact workload matching rather than an interpolated performance model.
+
+## Computational Complexity
+
+Let N be the number of queries, M the number of keys, d the query/key dimension, dv the value dimension, and B the key-block size.
+
+| Implementation | Arithmetic complexity | Auxiliary space |
+|---|---|---|
+| Standard attention | O(NMd + NMdv) | O(NM) |
+| Tiled attention | O(NMd + NMdv) | O(min(B,M) + dv) |
+
+The auxiliary-space expressions exclude input and output matrices.
+
+Both algorithms have the same asymptotic arithmetic complexity. Tiled attention reduces temporary memory requirements and can improve practical execution time through its streaming computation and memory-access behavior.
 
 ## Requirements
 
 - C++17-compatible compiler
-- CMake 3.16 or newer
-- Python 3 with NumPy for integration tests
+- CMake
+- Python 3 for benchmark and integration scripts
+- NumPy for independent numerical reference tests
+- Matplotlib for generating experimental figures
 
-The implementation uses the C++ standard library and does not require CUDA or an external attention library.
+The core C++ implementation requires no CUDA, GPU backend, or external numerical computing library.
 
-## Building
+## Build
 
-Clone the repository.
+Clone the repository:
 
 ```bash
 git clone https://github.com/sbathula-MML/autoattn-cpp.git
 cd autoattn-cpp
 ```
 
-Configure and compile the optimized executable.
+Build the optimized executable:
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release -j 4
 ```
 
-The executable is created at `build-release/autoattn`.
+The executable is available at:
+
+```text
+build-release/autoattn
+```
 
 ## Usage
 
-### Adaptive attention
+### Adaptive Execution
 
 ```bash
 ./build-release/autoattn run \
@@ -60,9 +218,9 @@ The executable is created at `build-release/autoattn`.
   --meta metrics.json
 ```
 
-The engine loads the calibration profile and selects a feasible attention implementation.
+This selects an algorithm and block size according to the calibration profile and available scratch-memory budget.
 
-### Standard attention
+### Standard Attention
 
 ```bash
 ./build-release/autoattn run \
@@ -74,7 +232,7 @@ The engine loads the calibration profile and selects a feasible attention implem
   --meta standard.json
 ```
 
-### Tiled attention
+### Tiled Attention
 
 ```bash
 ./build-release/autoattn run \
@@ -87,11 +245,9 @@ The engine loads the calibration profile and selects a feasible attention implem
   --meta tiled.json
 ```
 
-Add `--causal` to enable causal masking.
+Use `--causal` to enable causal masking.
 
-### Custom CSV input
-
-AutoAttn also accepts user-provided Q, K, and V matrices.
+### Custom Input Matrices
 
 ```bash
 ./build-release/autoattn run \
@@ -103,106 +259,152 @@ AutoAttn also accepts user-provided Q, K, and V matrices.
   --meta output.json
 ```
 
-Q and K must have matching feature dimensions. K and V must have matching row counts.
+The application writes the attention output to CSV and execution metadata to JSON.
 
-The output is saved as a CSV matrix. Execution metadata is saved as JSON.
+## Implementation and Verification
 
-## Attention Algorithms
+The following table connects AutoAttn's core functionality to its implementation and validation.
 
-### Standard attention
+| Functionality | Implementation | Verification |
+|---|---|---|
+| Contiguous matrix storage | `include/matrix.hpp` | `tests/test_matrix.cpp`, `tests/test_matrix_boundaries.cpp` |
+| Standard scaled dot-product attention | `include/standard_attention.hpp` | `tests/test_attention.cpp` |
+| Streaming tiled attention | `include/tiled_attention.hpp` | `tests/test_tiled_attention.cpp` |
+| Memory-aware algorithm selection | `include/dispatch_policy.hpp`, `include/memory_estimator.hpp` | `tests/test_dispatch_policy.cpp`, `tests/test_memory_estimator.cpp` |
+| Integrated attention execution | `include/attention_engine.hpp` | `tests/test_attention_engine.cpp` |
+| Benchmark-based calibration | `include/calibration_io.hpp` | `tests/test_calibration_io.cpp`, `tests/test_calibration_validation.py` |
+| CSV input/output and validation | `include/csv_io.hpp`, `src/main.cpp` | `tests/test_csv_io.cpp`, `tests/test_cli_integration.py` |
+| File overwrite protection | `include/path_safety.hpp` | `tests/test_path_safety.py` |
+| Independent numerical correctness | Attention kernels | `tests/test_numpy_reference.py` |
+| Runtime scaling and variability | `benchmarks/run_final_benchmarks.py` | `benchmarks/final_runs.csv`, `figures/final_runtime.pdf` |
+| Peak resident memory | `benchmarks/run_final_memory.py` | `benchmarks/final_memory_runs.csv`, `figures/final_memory.pdf` |
+| Adaptive policy behavior | Calibration and dispatch modules | `benchmarks/calibration_grid.csv`, `benchmarks/heldout_results.csv` |
 
-The baseline computes scaled query-key similarity scores, applies a numerically stable softmax, and multiplies the resulting attention weights by V.
+## Testing and Validation
 
-It materializes an attention-score matrix requiring O(NM) temporary storage for N queries and M keys.
+AutoAttn includes automated unit and integration tests covering:
 
-### Memory-efficient tiled attention
+- Matrix construction, indexing, and boundary conditions
+- Standard and tiled attention correctness
+- Causal masking
+- Online-softmax numerical behavior
+- Memory estimation and dispatch
+- CSV and calibration-file validation
+- Command-line integration
+- Input/output path safety
 
-The tiled implementation processes one query row at a time and divides the keys into blocks.
-
-It uses online softmax to maintain a running maximum, normalization factor, and weighted output accumulator.
-
-This avoids materializing the full attention matrix.
-
-The main scratch buffers require O(B + dv) memory, where B is the block size and dv is the value dimension.
-
-### Adaptive dispatcher
-
-The dispatcher selects the fastest measured configuration that satisfies the scratch-memory budget.
-
-For workloads with no exact calibration match, it uses a memory-aware fallback policy.
-
-The memory budget applies to estimated algorithm scratch buffers, not total process memory.
-
-## Experimental Results
-
-Experiments were conducted on an Apple Silicon MacBook Pro using optimized C++17 CPU implementations.
-
-### Runtime and memory
-
-For sequence length 4096 and attention dimension 64, one measured execution produced the following results.
-
-| Metric | Standard | Tiled |
-|---|---:|---:|
-| Runtime | 1.59 s | 0.43 s |
-| Peak resident memory | 69.45 MiB | 5.41 MiB |
-
-The tiled implementation achieved approximately 3.70x lower wall-clock runtime and 92.2% lower peak resident memory in this comparison.
-
-These timings are individual observations rather than repeated-run statistical estimates.
-
-### Adaptive block selection
-
-Calibration covered 12 workloads and 72 algorithm configurations.
-
-The best measured configuration improved runtime by an average of 1.913% over fixed block size 128 on the calibration workloads.
-
-On eight held-out workloads, the fallback policy had an initial mean measured gap of 2.462% relative to the fastest tested tiled configuration.
-
-Follow-up repeated measurements showed that some small differences arose from benchmark variability. These results should therefore be interpreted as exploratory rather than definitive generalization gains.
-
-## Testing
-
-Run the automated test suite with:
+Run the test suite:
 
 ```bash
 ctest --test-dir build-release --output-on-failure
 ```
 
-The suite covers matrix operations, attention correctness, causal masking, adaptive dispatch, memory estimates, CSV parsing, calibration loading, CLI integration, and file safety.
+Independent NumPy reference comparisons validate numerical correctness across multiple inputs and attention configurations.
 
-Independent NumPy comparisons are also used to verify numerical correctness.
+A diagnostic build using compiler warnings, AddressSanitizer, and UndefinedBehaviorSanitizer also passed all 12 registered tests without reported sanitizer errors.
+
+## Reproducing Experiments
+
+### Runtime Benchmarks
+
+```bash
+python3 benchmarks/run_final_benchmarks.py
+```
+
+The benchmark evaluates:
+
+- Sequence lengths: 128, 512, 1024
+- Feature dimensions: 32, 64
+- Causal and noncausal attention
+- Standard and tiled kernels
+- Five measured repetitions per configuration
+
+Results:
+
+- `benchmarks/final_runs.csv`
+- `benchmarks/final_summary.csv`
+
+### Peak Memory Benchmarks
+
+On macOS:
+
+```bash
+python3 benchmarks/run_final_memory.py
+```
+
+Uses `/usr/bin/time -l` to measure peak resident memory across sequence lengths 1024, 2048, and 4096.
+
+Results:
+
+- `benchmarks/final_memory_runs.csv`
+- `benchmarks/final_memory_summary.csv`
+
+### Regenerating Figures
+
+Install the plotting dependency:
+
+```bash
+python3 -m pip install matplotlib
+```
+
+Generate the plots:
+
+```bash
+python3 benchmarks/plot_final_results.py
+python3 benchmarks/plot_memory_results.py
+```
+
+The figures are saved in `figures/` in PNG and PDF formats.
 
 ## Project Structure
 
-- `include/` - Matrix class, attention kernels, dispatcher, and utilities
-- `src/` - Command-line application
-- `tests/` - C++ and Python tests
-- `benchmarks/` - Performance experiments, calibration profiles, and results
-- `CMakeLists.txt` - Build and testing configuration
+```text
+autoattn-cpp/
+├── CMakeLists.txt
+├── include/
+│   ├── matrix.hpp
+│   ├── standard_attention.hpp
+│   ├── tiled_attention.hpp
+│   ├── attention_engine.hpp
+│   ├── dispatch_policy.hpp
+│   ├── memory_estimator.hpp
+│   ├── calibration_io.hpp
+│   ├── csv_io.hpp
+│   └── path_safety.hpp
+├── src/
+│   └── main.cpp
+├── tests/
+│   └── ...
+├── benchmarks/
+│   └── ...
+└── figures/
+    └── ...
+```
 
-## Limitations
+## Limitations and Future Work
 
-AutoAttn is a CPU-oriented educational ML systems implementation, not a production Transformer inference engine.
+AutoAttn is an experimental CPU attention engine rather than a production inference backend.
 
-The current tiled kernel processes one query row at a time rather than using a fully optimized two-dimensional tiled GPU implementation.
+Current limitations include:
 
-The dispatcher primarily relies on exact workload calibration. Unseen workloads use a fixed-priority memory-aware fallback.
+- Single-query-row streaming instead of fully two-dimensional tiled execution
+- Exact-match calibration with heuristic fallback for unseen workloads
+- No GPU kernel implementation
+- No automatic differentiation or Transformer training framework
+- No optimized SIMD or multithreaded execution
 
-GPU kernels, automatic differentiation, full Transformer models, and distributed execution are outside the project scope.
+Potential extensions include vectorized kernels, multithreading, richer calibration models, multihead execution, and GPU acceleration.
 
 ## References
 
-1. Milakov and Gimelshein, Online normalizer calculation for softmax, 2018.
-   https://arxiv.org/abs/1805.02867
+1. Vaswani et al. (2017). *Attention Is All You Need.* https://arxiv.org/abs/1706.03762
 
-2. Dao et al., FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness, NeurIPS 2022.
-   https://arxiv.org/abs/2205.14135
+2. Milakov and Gimelshein (2018). *Online normalizer calculation for softmax.* https://arxiv.org/abs/1805.02867
+
+3. Dao et al. (2022). *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness.* https://arxiv.org/abs/2205.14135
 
 ## Author
 
-**Satwik Bathula**
-
-University of Southern California
-
-**Email** — sbathula@usc.edu
-
+**Satwik Bathula**  
+University of Southern California  
+Email: sbathula@usc.edu
